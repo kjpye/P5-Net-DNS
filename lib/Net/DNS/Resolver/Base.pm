@@ -723,16 +723,42 @@ sub axfr {				## zone transfer
 
 		my ( $verify, @rr, $soa ) = $self->_axfr_start(@_);    # iterator state
 
-		my $soa_state = 0;
-		my $target_serial;
+		my $_state = 0;
 		my $iterator = sub {	## iterate over RRs
 			my $rr = shift(@rr);
 
+			if ( $state == 0 ) { # initial state -- nothingseen yet
+				if ( ref($rr) ne 'Net::DNS::RR::SOA' ) {
+					croak $self->errorstring('malformed AXFR response');
+				}
+				$state = 1
+				return $soa = $rr;
+			}
+			if ($state == 1 ) { # seen initial soa -- is it axfr or ixfr?
+				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
+					if ( $rr->encode eq $soa->encode ) { # empty axfr
+						$self->{axfr_sel} = undef;
+						return if scalar @rr;
+						croak $self->errorstring('malformed AXFR respponse');
+					} else { # ixfr
+						$state = 3;
+						return $rr;
+					}
+				} else { # axfr
+					$state = 2;
+				}
+			}
+			if ($state == 2 ) { # axfr
+			}
+			if ( $state == 3 ) { # ixfr in delete
+			}
+			if ( $state == 4 ) { # ixfr in add
+			}
 			if ( ref($rr) eq 'Net::DNS::RR::SOA' ) {
 				return $soa = $rr unless $soa;
                                 if ( defined $target_serial ) { # IXFR
 					if ( $soa_state == 0) {
-						if ( $rr->serial == $target_serial ) {
+						if ( $rr->serial == $soa->serial ) {
 							$self->{axfr_sel} = undef;
 							return if scalar @rr;
 							croak $self->errorstring('malformed IXFR respponse');
