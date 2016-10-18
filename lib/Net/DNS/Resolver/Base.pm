@@ -723,67 +723,71 @@ sub axfr {				## zone transfer
 
 		my ( $verify, @rr, $soa ) = $self->_axfr_start(@_);    # iterator state
 
-		my $_state = 0;
+		my $state = 0;
 		my $iterator = sub {	## iterate over RRs
+			if ( ! scalar @rr ) { # run out of records -- get some more
+				my $reply;
+				( $reply, $verify ) = $self->_axfr_next($verify);
+				return $self->{axfr_sel} = undef unless $reply;
+				@rr = $reply->answer;
+			}
+
 			my $rr = shift(@rr);
 
-			if ( $state == 0 ) { # initial state -- nothingseen yet
+			if ( $state == 0 ) { # initial state -- nothing seen yet
 				if ( ref($rr) ne 'Net::DNS::RR::SOA' ) {
-					croak $self->errorstring('malformed AXFR response');
+					croak $self->errorstring('malformed AXFR response -- no initial SOA');
 				}
-				$state = 1
+				if ( defined $self->ixfr_serial and $rr->serial == $self->ixfr_serial ) { # ixfr has nothing new to transfer
+					return $rr unless scalar @rr;
+					croak $self->errorstring('malformed IXFR response -- data after solitary SOA');
+				}
+				$state = 1;
 				return $soa = $rr;
 			}
 			if ($state == 1 ) { # seen initial soa -- is it axfr or ixfr?
 				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
 					if ( $rr->encode eq $soa->encode ) { # empty axfr
 						$self->{axfr_sel} = undef;
-						return if scalar @rr;
-						croak $self->errorstring('malformed AXFR respponse');
+						return unless scalar @rr;
+						croak $self->errorstring('malformed AXFR response -- data after closing SOA');
 					} else { # ixfr
 						$state = 3;
 						return $rr;
 					}
 				} else { # axfr
 					$state = 2;
+					return $rr;
 				}
 			}
 			if ($state == 2 ) { # axfr
+				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
+					if ( $rr->encode eq $soa->encode ) { # empty axfr
+						$self->{axfr_sel} = undef;
+						return unless scalar @rr;
+						croak $self->errorstring('malformed AXFR response -- data after closing SOA');
+					}
+				}
+				return $rr;
 			}
 			if ( $state == 3 ) { # ixfr in delete
+				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
+					$state = 4;
+				}
+				return $rr;
 			}
 			if ( $state == 4 ) { # ixfr in add
-			}
-			if ( ref($rr) eq 'Net::DNS::RR::SOA' ) {
-				return $soa = $rr unless $soa;
-                                if ( defined $target_serial ) { # IXFR
-					if ( $soa_state == 0) {
-						if ( $rr->serial == $soa->serial ) {
-							$self->{axfr_sel} = undef;
-							return if scalar @rr;
-							croak $self->errorstring('malformed IXFR respponse');
-						} else {
-							$soa_count = 1;
-							return $rr;
-						}
-					} else {
-						$soa_count = 0;
-						return $rr;
+				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
+					if ( $rr->encode eq $soa->encode ) { # complete
+						$self->{axfr_sel} = undef;
+						return unless scalar @rr;
+						croak $self->errorstring('malformed IXFR response -- data after closing SOA');
 					}
-                                } else { # AXFR or start of IXFR
-					$self->{axfr_sel} = undef;
-					return if $rr->encode eq $soa->encode;
-					croak $self->errorstring('mismatched final SOA');
-                                }
+					$state = 3;
+				}
+				return $rr;
 			}
-
-			return $rr if scalar @rr;
-
-			my $reply;
-			( $reply, $verify ) = $self->_axfr_next($verify);
-			return $self->{axfr_sel} = undef unless $reply;
-			@rr = $reply->answer;
-			return $rr;
+			croak $self->errorstring("Internal error -- ixfr state is $state");
 		};
 
 		$iterator->();					# read initial packet
@@ -815,16 +819,17 @@ sub _axfr_start {
 	my $self  = shift;
 	my $dname = scalar(@_) ? shift : $self->domain;
 	my ($class, $soa) = @_;
-        $class = 'IN' unless $clas;
+        $class = 'IN' unless $class;
 
+	my $request;
         if (defined $soa) {
                 my $serial = $soa->serial;
-                $self->{'current_soa'} = $serial;
+		$self->ixfr_serial = $serial;
                 $self->_diag("axfr_start old serial $serial");
         	my $request = $self->_make_query_packet( $dname, 'IXFR', $class );
                 request->push(authority => $soa);
         } else {
-        	my $request = $self->_make_query_packet( $dname, 'AXFR', $class );
+        	$request = $self->_make_query_packet( $dname, 'AXFR', $class );
         }
 	my $content = $request->data;
 	my $TCP_msg = pack 'n a*', length($content), $content;
