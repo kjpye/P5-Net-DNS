@@ -724,6 +724,7 @@ sub axfr {				## zone transfer
 		my ( $verify, @rr, $soa ) = $self->_axfr_start(@_);    # iterator state
 
 		my $state = 0;
+                my $newserial = 0; # target serial number for transfer
 		my $iterator = sub {	## iterate over RRs
 			if ( ! scalar @rr ) { # run out of records -- get some more
 				my $reply;
@@ -734,7 +735,7 @@ sub axfr {				## zone transfer
 
 			my $rr = shift(@rr);
 
-			if ( $state == 0 ) { # initial state -- nothing seen yet
+			if ( $state == 0 ) { # initial state -- nothing seen previously
 				if ( ref($rr) ne 'Net::DNS::RR::SOA' ) {
 					croak $self->errorstring('malformed AXFR response -- no initial SOA');
 				}
@@ -743,6 +744,7 @@ sub axfr {				## zone transfer
 					croak $self->errorstring('malformed IXFR response -- data after solitary SOA');
 				}
 				$state = 1;
+                                $newserial = $rr->serial;
 				return $soa = $rr;
 			}
 			if ($state == 1 ) { # seen initial soa -- is it axfr or ixfr?
@@ -752,11 +754,11 @@ sub axfr {				## zone transfer
 						return unless scalar @rr;
 						croak $self->errorstring('malformed AXFR response -- data after closing SOA');
 					} else { # ixfr
-						$state = 3;
+						$state = 3; # Need two more SOA records with final serial number
 						return $rr;
 					}
 				} else { # axfr
-					$state = 2;
+					$state = 2; # Next SOA is end of transfer
 					return $rr;
 				}
 			}
@@ -770,20 +772,9 @@ sub axfr {				## zone transfer
 				}
 				return $rr;
 			}
-			if ( $state == 3 ) { # ixfr in delete
+			if ( $state == 3 ) { # Not yet in final section
 				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
-					$state = 4;
-				}
-				return $rr;
-			}
-			if ( $state == 4 ) { # ixfr in add
-				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
-					if ( $rr->encode eq $soa->encode ) { # complete
-						$self->{axfr_sel} = undef;
-						return unless scalar @rr;
-						croak $self->errorstring('malformed IXFR response -- data after closing SOA');
-					}
-					$state = 3;
+					$state = 2 if $rr->serial = $newserial;
 				}
 				return $rr;
 			}
