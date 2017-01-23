@@ -739,17 +739,17 @@ sub axfr {				## zone transfer
 				if ( ref($rr) ne 'Net::DNS::RR::SOA' ) {
 					croak $self->errorstring('malformed AXFR response -- no initial SOA');
 				}
-				if ( defined $self->ixfr_serial and $rr->serial == $self->ixfr_serial ) { # ixfr has nothing new to transfer
-					return $rr unless scalar @rr;
-					croak $self->errorstring('malformed IXFR response -- data after solitary SOA');
-				}
+#				if ( defined $self->ixfr_serial and $rr->serial == $self->ixfr_serial ) { # ixfr has nothing new to transfer
+#					return $rr unless scalar @rr;
+#					croak $self->errorstring('malformed IXFR response -- data after solitary SOA');
+#				}
 				$state = 1;
                                 $newserial = $rr->serial;
 				return $soa = $rr;
 			}
 			if ($state == 1 ) { # seen initial soa -- is it axfr or ixfr?
 				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
-					if ( $rr->encode eq $soa->encode ) { # empty axfr
+					if ( $rr->encode eq $soa->encode ) { # empty axfr -- no new data for ixfr
 						$self->{axfr_sel} = undef;
 						return unless scalar @rr;
 						croak $self->errorstring('malformed AXFR response -- data after closing SOA');
@@ -758,13 +758,13 @@ sub axfr {				## zone transfer
 						return $rr;
 					}
 				} else { # axfr
-					$state = 2; # Next SOA is end of transfer
+					$state = 2; # Next SOA with final serial is end of transfer
 					return $rr;
 				}
 			}
 			if ($state == 2 ) { # axfr
 				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
-					if ( $rr->encode eq $soa->encode ) { # empty axfr
+					if ( $rr->encode eq $soa->encode ) { # transfer complete
 						$self->{axfr_sel} = undef;
 						return unless scalar @rr;
 						croak $self->errorstring('malformed AXFR response -- data after closing SOA');
@@ -774,11 +774,11 @@ sub axfr {				## zone transfer
 			}
 			if ( $state == 3 ) { # Not yet in final section
 				if ( ref($rr) eq 'Net::DNS::RR::SOA' ) { 
-					$state = 2 if $rr->serial = $newserial;
+					$state = 2 if $rr->encode eq $soa->encode;
 				}
 				return $rr;
 			}
-			croak $self->errorstring("Internal error -- ixfr state is $state");
+			croak $self->errorstring("Internal error -- axfr/ixfr state is $state");
 		};
 
 		$iterator->();					# read initial packet
@@ -814,10 +814,10 @@ sub _axfr_start {
 
 	my $request;
         if (defined $soa) {
-                my $serial = $soa->serial;
-		$self->ixfr_serial = $serial;
-                $self->_diag("axfr_start old serial $serial");
-        	my $request = $self->_make_query_packet( $dname, 'IXFR', $class );
+#		my $serial = $soa->serial;
+#		$self->ixfr_serial = $serial;
+#		$self->_diag("axfr_start old serial $serial");
+        	$request = $self->_make_query_packet( $dname, 'IXFR', $class );
                 request->push(authority => $soa);
         } else {
         	$request = $self->_make_query_packet( $dname, 'AXFR', $class );
