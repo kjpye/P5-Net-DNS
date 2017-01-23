@@ -724,7 +724,6 @@ sub axfr {				## zone transfer
 		my ( $verify, @rr, $soa ) = $self->_axfr_start(@_);    # iterator state
 
 		my $state = 0;
-                my $newserial = 0; # target serial number for transfer
 		my $iterator = sub {	## iterate over RRs
 			if ( ! scalar @rr ) { # run out of records -- get some more
 				my $reply;
@@ -744,7 +743,6 @@ sub axfr {				## zone transfer
 #					croak $self->errorstring('malformed IXFR response -- data after solitary SOA');
 #				}
 				$state = 1;
-                                $newserial = $rr->serial;
 				return $soa = $rr;
 			}
 			if ($state == 1 ) { # seen initial soa -- is it axfr or ixfr?
